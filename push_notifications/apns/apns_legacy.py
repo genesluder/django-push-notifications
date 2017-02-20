@@ -13,8 +13,8 @@ import time
 from contextlib import closing
 from binascii import unhexlify
 from django.core.exceptions import ImproperlyConfigured
-from . import NotificationError
-from .settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
+from .. import NotificationError
+from ..settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
 
 
 APNS_ERROR_MESSAGES = {

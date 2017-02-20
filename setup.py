@@ -25,6 +25,7 @@ setup(
 	packages=[
 		"push_notifications",
 		"push_notifications/api",
+		"push_notifications/apns",
 		"push_notifications/migrations",
 		"push_notifications/management",
 		"push_notifications/management/commands",
@@ -37,4 +38,7 @@ setup(
 	long_description=README,
 	url="https://github.com/jleclanche/django-push-notifications",
 	version=push_notifications.__version__,
+	install_requires=[
+		'gobiko.apns',
+	],
 )
