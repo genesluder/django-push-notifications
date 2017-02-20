@@ -156,15 +156,20 @@ class APNSDevice(Device):
 	class Meta:
 		verbose_name = _("APNS device")
 
-	def send_message(self, message, creds=None, **kwargs):
-		from .apns import apns_send_message
+	def send_message(self, message, **kwargs):
 
-		return apns_send_message(
-			registration_id=self.registration_id,
-			alert=message,
-			application_id=self.application_id, creds=creds,
-			**kwargs
-		)
+		if SETTINGS['APNS_USE_CELERY']:
+			from .tasks import apns_send_message_task
+			apns_send_message_task.delay(self.registration_id, message, **kwargs)
+		else:
+			from .apns import apns_send_message
+
+			try:
+				response = apns_send_message(registration_id=self.registration_id, alert=message, **kwargs)
+			except BadDeviceToken:
+				self.active = False
+				self.save()
+			return response
 
 
 class WNSDeviceManager(models.Manager):

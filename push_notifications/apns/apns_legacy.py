@@ -5,6 +5,26 @@ https://developer.apple.com/library/content/documentation/NetworkingInternet/Con
 """
 
 import time
+from contextlib import closing
+from binascii import unhexlify
+from django.core.exceptions import ImproperlyConfigured
+from .. import NotificationError
+from ..settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
+
+
+APNS_ERROR_MESSAGES = {
+	1: "Processing error",
+	2: "Missing device token",
+	3: "Missing topic",
+	4: "Missing payload",
+	5: "Invalid token size",
+	6: "Invalid topic size",
+	7: "Invalid payload size",
+	8: "Invalid token",
+	10: "Shutdown",
+	128: "Protocol error (APNS could not parse notification)",
+	255: "Unknown APNS error",
+}
 
 from apns2 import client as apns2_client
 from apns2 import credentials as apns2_credentials
