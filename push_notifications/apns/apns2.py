@@ -3,7 +3,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from gobiko.apns import APNsClient
 
-from .. import NotificationError
+from ..exceptions import NotificationError
 from ..settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
 
 
