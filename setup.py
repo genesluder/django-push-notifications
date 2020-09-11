@@ -10,8 +10,6 @@ setup(
 		"push_notifications/api",
 		"push_notifications/apns",
 		"push_notifications/migrations",
-		"push_notifications/management",
-		"push_notifications/management/commands",
 	],
 	description="Send push notifications to mobile devices through GCM or APNS in Django.",
 	download_url="https://github.com/jleclanche/django-push-notifications/tarball/master",
