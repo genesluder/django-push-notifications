@@ -1,24 +1,7 @@
 #!/usr/bin/env python
-import os.path
-import push_notifications
-from distutils.core import setup
 
-README = open(os.path.join(os.path.dirname(__file__), "README.rst")).read()
+from setuptools import setup
 
-CLASSIFIERS = [
-	"Development Status :: 5 - Production/Stable",
-	"Environment :: Web Environment",
-	"Framework :: Django",
-	"Intended Audience :: Developers",
-	"License :: OSI Approved :: MIT License",
-	"Programming Language :: Python",
-	"Programming Language :: Python :: 2.7",
-	"Programming Language :: Python :: 3",
-	"Programming Language :: Python :: 3.4",
-	"Programming Language :: Python :: 3.5",
-	"Topic :: Software Development :: Libraries :: Python Modules",
-	"Topic :: System :: Networking",
-]
 
 setup(
 	name="django-push-notifications",

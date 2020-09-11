@@ -1,10 +1,14 @@
 from django.apps import apps
 from django.contrib import admin, messages
-from django.utils.translation import ugettext_lazy as _
+from django.utils.encoding import force_text
+from django.utils.translation import gettext_lazy as _
+
+from .apns import APNSServerError
 from .gcm import GCMError
-from .apns import APNSServerError, APNS_ERROR_MESSAGES
-from .models import APNSDevice, GCMDevice, WNSDevice, get_expired_tokens
+from .models import APNSDevice, GCMDevice, WebPushDevice, WNSDevice
 from .settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
+from .webpush import WebPushError
+
 
 User = apps.get_model(*SETTINGS["USER_MODEL"].split("."))
 
@@ -12,7 +16,7 @@ User = apps.get_model(*SETTINGS["USER_MODEL"].split("."))
 class DeviceAdmin(admin.ModelAdmin):
 	list_display = ("__str__", "device_id", "user", "active", "date_created")
 	list_filter = ("active",)
-	actions = ("send_message", "send_bulk_message", "prune_devices", "enable", "disable")
+	actions = ("send_message", "send_bulk_message", "enable", "disable")
 	raw_id_fields = ("user",)
 
 	if hasattr(User, "USERNAME_FIELD"):
@@ -39,19 +43,64 @@ class DeviceAdmin(admin.ModelAdmin):
 			except GCMError as e:
 				errors.append(str(e))
 			except APNSServerError as e:
-				errors.append(APNS_ERROR_MESSAGES[e.status])
+				errors.append(e.status)
+			except WebPushError as e:
+				errors.append(force_text(e))
 
 			if bulk:
 				break
 
+		# Because NotRegistered and InvalidRegistration do not throw GCMError
+		# catch them here to display error msg.
+		if not bulk:
+			for r in ret:
+				if "error" in r["results"][0]:
+					errors.append(r["results"][0]["error"])
+		else:
+			if "results" in ret[0][0]:
+				try:
+					errors = [r["error"] for r in ret[0][0]["results"] if "error" in r]
+				except TypeError:
+					for entry in ret[0][0]:
+						errors = errors + [r["error"] for r in entry["results"] if "error" in r]
+				except IndexError:
+					pass
+			else:
+				# different format, e.g.:
+				# [{'some_token1': 'Success',
+				#  'some_token2': 'BadDeviceToken'}]
+				for key, value in ret[0][0].items():
+					if value.lower() != "success":
+						errors.append(value)
 		if errors:
 			self.message_user(
 				request, _("Some messages could not be processed: %r" % (", ".join(errors))),
 				level=messages.ERROR
 			)
 		if ret:
-			if not bulk:
-				ret = ", ".join(ret)
+			if bulk:
+				# When the queryset exceeds the max_recipients value, the
+				# send_message method returns a list of dicts, one per chunk
+				if "results" in ret[0][0]:
+					try:
+						success = ret[0][0]["success"]
+					except TypeError:
+						success = 0
+						for entry in ret[0][0]:
+							success = success + entry["success"]
+					if success == 0:
+						return
+				else:
+					# different format, e.g.:
+					# [{'some_token1': 'Success',
+					#  'some_token2': 'BadDeviceToken'}]
+					success = []
+					for key, value in ret[0][0].items():
+						if value.lower() == "success":
+							success.append(key)
+
+			elif len(errors) == len(ret):
+				return
 			if errors:
 				msg = _("Some messages were sent: %s" % (ret))
 			else:
@@ -78,19 +127,6 @@ class DeviceAdmin(admin.ModelAdmin):
 
 	disable.short_description = _("Disable selected devices")
 
-	def prune_devices(self, request, queryset):
-		# Note that when get_expired_tokens() is called, Apple's
-		# feedback service resets, so, calling it again won't return
-		# the device again (unless a message is sent to it again).  So,
-		# if the user doesn't select all the devices for pruning, we
-		# could very easily leave an expired device as active.  Maybe
-		#  this is just a bad API.
-		expired = get_expired_tokens()
-		devices = queryset.filter(registration_id__in=expired)
-		for d in devices:
-			d.active = False
-			d.save()
-
 
 class GCMDeviceAdmin(DeviceAdmin):
 	list_display = (
@@ -102,3 +138,4 @@ class GCMDeviceAdmin(DeviceAdmin):
 admin.site.register(APNSDevice, DeviceAdmin)
 admin.site.register(GCMDevice, GCMDeviceAdmin)
 admin.site.register(WNSDevice, DeviceAdmin)
+admin.site.register(WebPushDevice, DeviceAdmin)

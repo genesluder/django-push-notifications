@@ -7,18 +7,12 @@ https://msdn.microsoft.com/en-us/windows/uwp/controls-and-patterns/tiles-and-not
 
 import json
 import xml.etree.ElementTree as ET
-from xml.etree.ElementTree import tostring
-
-try:
-	from urllib.error import HTTPError
-	from urllib.request import Request, urlopen
-except ImportError:
-	# Python 2 support
-	from urllib2 import HTTPError, Request, urlopen
 
 from django.core.exceptions import ImproperlyConfigured
 
-from . import NotificationError
+from .compat import HTTPError, Request, urlencode, urlopen
+from .conf import get_manager
+from .exceptions import NotificationError
 from .settings import PUSH_NOTIFICATIONS_SETTINGS as SETTINGS
 
 
@@ -34,35 +28,36 @@ class WNSNotificationResponseError(WNSError):
 	pass
 
 
-def _wns_authenticate(scope="notify.windows.com"):
+def _wns_authenticate(scope="notify.windows.com", application_id=None):
 	"""
 	Requests an Access token for WNS communication.
 
 	:return: dict: {'access_token': <str>, 'expires_in': <int>, 'token_type': 'bearer'}
 	"""
-	package_id = SETTINGS.get("WNS_PACKAGE_SECURITY_ID")
-	secret_key = SETTINGS.get("WNS_SECRET_KEY")
-	if not package_id:
+	client_id = get_manager().get_wns_package_security_id(application_id)
+	client_secret = get_manager().get_wns_secret_key(application_id)
+	if not client_id:
 		raise ImproperlyConfigured(
 			'You need to set PUSH_NOTIFICATIONS_SETTINGS["WNS_PACKAGE_SECURITY_ID"] to use WNS.'
 		)
-	if not secret_key:
+
+	if not client_secret:
 		raise ImproperlyConfigured(
 			'You need to set PUSH_NOTIFICATIONS_SETTINGS["WNS_SECRET_KEY"] to use WNS.'
 		)
 
-	data = (
-		"grant_type=client_credentials"
-		"&client_id=%(client_ids)"
-		"&client_secret=%(client_secret)s"
-		"&scope=notify.windows.com"
-	) % {"client_id": package_id, "client_secret": secret_key, "scope": scope}
-	data_bytes = bytes(data, "utf-8")
 	headers = {
 		"Content-Type": "application/x-www-form-urlencoded",
 	}
+	params = {
+		"grant_type": "client_credentials",
+		"client_id": client_id,
+		"client_secret": client_secret,
+		"scope": scope,
+	}
+	data = urlencode(params).encode("utf-8")
 
-	request = Request(SETTINGS.WNS_ACCESS_URL, data=data_bytes, headers=headers)
+	request = Request(SETTINGS["WNS_ACCESS_URL"], data=data, headers=headers)
 	try:
 		response = urlopen(request)
 	except HTTPError as err:
@@ -71,10 +66,23 @@ def _wns_authenticate(scope="notify.windows.com"):
 			# https://msdn.microsoft.com/en-us/library/windows/apps/xaml/hh868245
 			raise WNSAuthenticationError("Authentication failed, check your WNS settings.")
 		raise err
-	return json.loads(response.read().decode("utf-8"))
+
+	oauth_data = response.read().decode("utf-8")
+	try:
+		oauth_data = json.loads(oauth_data)
+	except Exception:
+		# Upstream WNS issue
+		raise WNSAuthenticationError("Received invalid JSON data from WNS.")
+
+	access_token = oauth_data.get("access_token")
+	if not access_token:
+		# Upstream WNS issue
+		raise WNSAuthenticationError("Access token missing from WNS response.")
+
+	return access_token
 
 
-def _wns_send(uri, data, wns_type="wns/toast"):
+def _wns_send(uri, data, wns_type="wns/toast", application_id=None):
 	"""
 	Sends a notification data and authentication to WNS.
 
@@ -82,9 +90,7 @@ def _wns_send(uri, data, wns_type="wns/toast"):
 	:param data: dict: The notification data to be sent.
 	:return:
 	"""
-	access_token = _wns_authenticate()["access_token"]
-
-	authorization = "Bearer %(token)s" % {"token": access_token}
+	access_token = _wns_authenticate(application_id=application_id)
 
 	content_type = "text/xml"
 	if wns_type == "wns/raw":
@@ -93,7 +99,7 @@ def _wns_send(uri, data, wns_type="wns/toast"):
 	headers = {
 		# content_type is "text/xml" (toast/badge/tile) | "application/octet-stream" (raw)
 		"Content-Type": content_type,
-		"Authorization": authorization,
+		"Authorization": "Bearer %s" % (access_token),
 		"X-WNS-Type": wns_type,  # wns/toast | wns/badge | wns/tile | wns/raw
 	}
 
@@ -160,10 +166,12 @@ def _wns_prepare_toast(data, **kwargs):
 			elem = ET.SubElement(binding, "img")
 			elem.attrib["src"] = item
 			elem.attrib["id"] = str(count)
-	return tostring(root)
+	return ET.tostring(root)
 
 
-def wns_send_message(uri, message=None, xml_data=None, raw_data=None, **kwargs):
+def wns_send_message(
+	uri, message=None, xml_data=None, raw_data=None, application_id=None, **kwargs
+):
 	"""
 	Sends a notification request to WNS.
 	There are four notification types that WNS can send: toast, tile, badge and raw.
@@ -210,7 +218,7 @@ def wns_send_message(uri, message=None, xml_data=None, raw_data=None, **kwargs):
 	elif xml_data:
 		xml = dict_to_xml_schema(xml_data)
 		wns_type = "wns/%s" % xml.tag
-		prepared_data = tostring(xml)
+		prepared_data = ET.tostring(xml)
 	# Create a raw notification
 	elif raw_data:
 		wns_type = "wns/raw"
@@ -221,10 +229,14 @@ def wns_send_message(uri, message=None, xml_data=None, raw_data=None, **kwargs):
 			"`message`, `xml_data`, `raw_data`"
 		)
 
-	_wns_send(uri=uri, data=prepared_data, wns_type=wns_type)
+	return _wns_send(
+		uri=uri, data=prepared_data, wns_type=wns_type, application_id=application_id
+	)
 
 
-def wns_send_bulk_message(uri_list, message=None, xml_data=None, raw_data=None, **kwargs):
+def wns_send_bulk_message(
+	uri_list, message=None, xml_data=None, raw_data=None, application_id=None, **kwargs
+):
 	"""
 	WNS doesn't support bulk notification, so we loop through each uri.
 
@@ -233,12 +245,15 @@ def wns_send_bulk_message(uri_list, message=None, xml_data=None, raw_data=None, 
 	:param xml_data: dict: A dictionary containing data to be converted to an xml tree.
 	:param raw_data: str: Data to be sent via a `raw` notification.
 	"""
+	res = []
 	if uri_list:
 		for uri in uri_list:
-			wns_send_message(
+			r = wns_send_message(
 				uri=uri, message=message, xml_data=xml_data,
-				raw_data=raw_data, **kwargs
+				raw_data=raw_data, application_id=application_id, **kwargs
 			)
+			res.append(r)
+	return res
 
 
 def dict_to_xml_schema(data):
