@@ -46,6 +46,19 @@ def _create_client():
 
     APNS_KEY = SETTINGS.get("APNS_AUTH_KEY")
 
+    if not APNS_KEY:
+        APNS_AUTH_KEY_FILE = SETTINGS.get("APNS_AUTH_KEY_FILE")
+        if not APNS_AUTH_KEY_FILE:
+            raise ImproperlyConfigured(
+                'You need to set PUSH_NOTIFICATIONS_SETTINGS["APNS_AUTH_KEY_FILE"] to send messages through APNs.'
+            )
+        
+        try:
+            with open(APNS_AUTH_KEY_FILE, "r") as f:
+                APNS_KEY = f.read()
+        except Exception as e:
+            raise ImproperlyConfigured("The APNs auth key file at %r is not readable: %s" % (APNS_AUTH_KEY_FILE, e))
+
     APNS_KEY_ID = SETTINGS.get("APNS_AUTH_KEY_ID")
     if not APNS_KEY_ID:
         raise ImproperlyConfigured(
